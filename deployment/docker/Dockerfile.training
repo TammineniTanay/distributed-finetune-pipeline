@@ -1,0 +1,107 @@
+# ==============================================================================
+# Stage 1: Base CUDA image with system dependencies
+# ==============================================================================
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS base
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-dev \
+    python3.11-venv \
+    python3-pip \
+    git \
+    wget \
+    curl \
+    build-essential \
+    cmake \
+    ninja-build \
+    pkg-config \
+    libaio-dev \
+    libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
+    && update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
+
+RUN python -m pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# ==============================================================================
+# Stage 2: Python dependencies
+# ==============================================================================
+FROM base AS deps
+
+WORKDIR /app
+
+COPY requirements.txt /app/requirements.txt
+
+# Install PyTorch with CUDA 12.4 support
+RUN pip install --no-cache-dir \
+    torch==2.4.0 \
+    torchvision==0.19.0 \
+    torchaudio==2.4.0 \
+    --index-url https://download.pytorch.org/whl/cu124
+
+# Install core ML libraries
+RUN pip install --no-cache-dir \
+    transformers>=4.44.0 \
+    datasets>=2.21.0 \
+    accelerate>=0.33.0 \
+    peft>=0.12.0 \
+    trl>=0.10.0 \
+    bitsandbytes>=0.43.0 \
+    safetensors>=0.4.0 \
+    tokenizers>=0.19.0 \
+    sentencepiece \
+    protobuf
+
+# Install DeepSpeed with CUDA ops
+ENV DS_BUILD_OPS=1
+ENV DS_BUILD_FUSED_ADAM=1
+ENV DS_BUILD_FUSED_LAMB=1
+ENV DS_BUILD_CPU_ADAM=1
+ENV DS_BUILD_UTILS=1
+ENV DS_BUILD_AIO=1
+RUN pip install --no-cache-dir deepspeed>=0.14.0
+
+# Install Flash Attention 2
+RUN pip install --no-cache-dir flash-attn>=2.6.0 --no-build-isolation
+
+# Install remaining requirements
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+# ==============================================================================
+# Stage 3: Training image
+# ==============================================================================
+FROM deps AS training
+
+WORKDIR /app
+
+# Copy pipeline code
+COPY config/ /app/config/
+COPY data_curation/ /app/data_curation/
+COPY training/ /app/training/
+COPY model_merging/ /app/model_merging/
+COPY evaluation/ /app/evaluation/
+COPY monitoring/ /app/monitoring/
+COPY pipeline.py /app/pipeline.py
+
+# Create output directories
+RUN mkdir -p /app/outputs /app/checkpoints /app/data /app/logs
+
+# Set environment for distributed training
+ENV NCCL_DEBUG=INFO
+ENV NCCL_IB_DISABLE=0
+ENV NCCL_NET_GDR_LEVEL=2
+ENV OMP_NUM_THREADS=8
+ENV TOKENIZERS_PARALLELISM=false
+ENV WANDB_PROJECT=distributed-finetune-pipeline
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD python -c "import torch; assert torch.cuda.is_available()" || exit 1
+
+ENTRYPOINT ["python", "-m"]
+CMD ["training.train", "--config", "/app/config/pipeline_config.yaml"]

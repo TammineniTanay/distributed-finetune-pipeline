@@ -1,0 +1,190 @@
+# ==============================================================================
+# Evaluation Rubrics for LLM-as-Judge Scoring
+# ==============================================================================
+
+# Default rubric applied to all generation benchmarks unless overridden
+default:
+  criteria:
+    - name: accuracy
+      weight: 0.30
+      description: >
+        Factual correctness of the response. Does it contain accurate
+        technical information? Are claims verifiable and correct?
+      scale:
+        1: "Contains major factual errors or hallucinations"
+        2: "Contains some inaccuracies that could mislead"
+        3: "Mostly accurate with minor imprecisions"
+        4: "Accurate with only trivial imprecisions"
+        5: "Completely accurate and technically precise"
+
+    - name: completeness
+      weight: 0.25
+      description: >
+        Coverage of the topic. Does the response address all parts of the
+        question? Are important aspects missing?
+      scale:
+        1: "Addresses less than 25% of the question"
+        2: "Addresses some aspects but misses major components"
+        3: "Covers most aspects with some gaps"
+        4: "Thorough coverage with only minor omissions"
+        5: "Comprehensive coverage of all aspects"
+
+    - name: clarity
+      weight: 0.20
+      description: >
+        Organization and readability. Is the response well-structured?
+        Are technical concepts explained clearly?
+      scale:
+        1: "Incoherent or very difficult to follow"
+        2: "Poorly organized with unclear explanations"
+        3: "Reasonably clear with some organizational issues"
+        4: "Well-organized and clearly written"
+        5: "Exceptionally clear, well-structured, and easy to follow"
+
+    - name: helpfulness
+      weight: 0.15
+      description: >
+        Practical utility. Would a practitioner find this response useful?
+        Does it provide actionable information?
+      scale:
+        1: "Not useful for any practical purpose"
+        2: "Minimally useful, lacks actionable content"
+        3: "Moderately useful with some actionable information"
+        4: "Very useful with clear actionable guidance"
+        5: "Exceptionally useful, immediately actionable"
+
+    - name: instruction_following
+      weight: 0.10
+      description: >
+        Adherence to the prompt's specific requirements. Does the response
+        follow format constraints, word limits, or structural requirements?
+      scale:
+        1: "Completely ignores instructions"
+        2: "Follows some instructions but misses key constraints"
+        3: "Follows most instructions with minor deviations"
+        4: "Follows all instructions with trivial deviations"
+        5: "Perfectly follows all instructions and constraints"
+
+# Domain-specific rubric for ML/AI technical content
+domain_ml:
+  criteria:
+    - name: technical_depth
+      weight: 0.30
+      description: >
+        Depth of technical understanding demonstrated. Does the response
+        show mastery of underlying concepts, not just surface-level knowledge?
+      scale:
+        1: "Surface-level only, no technical depth"
+        2: "Basic understanding without nuance"
+        3: "Good understanding with some deeper insights"
+        4: "Strong technical depth with nuanced understanding"
+        5: "Expert-level depth with novel insights or connections"
+
+    - name: accuracy
+      weight: 0.25
+      description: >
+        Technical correctness specific to ML/AI. Are formulas, algorithms,
+        and architectural details correct?
+      scale:
+        1: "Fundamental technical errors"
+        2: "Several technical mistakes"
+        3: "Mostly correct with minor technical issues"
+        4: "Technically accurate throughout"
+        5: "Technically flawless with precise terminology"
+
+    - name: practical_relevance
+      weight: 0.20
+      description: >
+        Real-world applicability. Does the response connect theory to
+        practice? Are trade-offs and practical considerations discussed?
+      scale:
+        1: "Purely theoretical with no practical connection"
+        2: "Limited practical relevance"
+        3: "Some practical considerations mentioned"
+        4: "Good balance of theory and practice"
+        5: "Excellent practical guidance with real-world considerations"
+
+    - name: completeness
+      weight: 0.15
+      description: >
+        Coverage of the ML topic including edge cases, limitations,
+        and alternative approaches.
+      scale:
+        1: "Severely incomplete"
+        2: "Missing major aspects"
+        3: "Covers main points"
+        4: "Thorough with minor gaps"
+        5: "Comprehensive including edge cases and alternatives"
+
+    - name: clarity
+      weight: 0.10
+      description: >
+        How well technical concepts are communicated to the target audience.
+      scale:
+        1: "Incomprehensible"
+        2: "Confusing explanations"
+        3: "Understandable but could be clearer"
+        4: "Clear and well-explained"
+        5: "Exceptionally clear, excellent use of examples/analogies"
+
+# Code generation rubric
+code_generation:
+  criteria:
+    - name: correctness
+      weight: 0.35
+      description: >
+        Does the code produce correct output? Are edge cases handled?
+        Would it run without errors?
+      scale:
+        1: "Code has critical bugs or won't run"
+        2: "Code runs but produces wrong results"
+        3: "Code works for basic cases but misses edge cases"
+        4: "Code is correct with minor edge case issues"
+        5: "Code is correct, handles edge cases, and is robust"
+
+    - name: code_quality
+      weight: 0.25
+      description: >
+        Code readability, naming conventions, structure, and adherence
+        to language-specific best practices.
+      scale:
+        1: "Very poor quality, unreadable"
+        2: "Below average quality"
+        3: "Acceptable quality"
+        4: "Good quality, follows best practices"
+        5: "Excellent quality, production-ready"
+
+    - name: efficiency
+      weight: 0.15
+      description: >
+        Algorithmic efficiency and resource usage. Is the solution
+        appropriately optimized for the problem size?
+      scale:
+        1: "Extremely inefficient approach"
+        2: "Suboptimal but functional"
+        3: "Reasonable efficiency"
+        4: "Well-optimized"
+        5: "Optimally efficient with appropriate data structures"
+
+    - name: documentation
+      weight: 0.15
+      description: >
+        Presence and quality of docstrings, type hints, and inline comments.
+      scale:
+        1: "No documentation"
+        2: "Minimal documentation"
+        3: "Adequate documentation"
+        4: "Good documentation with type hints"
+        5: "Excellent documentation, fully typed, clear docstrings"
+
+    - name: instruction_following
+      weight: 0.10
+      description: >
+        Does the code match the requested function signature, naming,
+        and structural requirements?
+      scale:
+        1: "Ignores specifications"
+        2: "Partially follows specifications"
+        3: "Mostly follows specifications"
+        4: "Follows all specifications"
+        5: "Perfectly matches all specifications"

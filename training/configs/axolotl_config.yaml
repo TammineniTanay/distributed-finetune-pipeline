@@ -1,0 +1,101 @@
+# =============================================================================
+# Axolotl Configuration for QLoRA Fine-Tuning
+# =============================================================================
+# Alternative training runner using Axolotl framework.
+# Provides additional features like sample packing, multi-dataset mixing,
+# and simplified configuration for common patterns.
+
+base_model: meta-llama/Meta-Llama-3-8B
+model_type: LlamaForCausalLM
+tokenizer_type: AutoTokenizer
+trust_remote_code: false
+
+# Load / Quantization
+load_in_4bit: true
+adapter: qlora
+lora_r: 64
+lora_alpha: 128
+lora_dropout: 0.05
+lora_target_linear: true
+lora_target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+lora_modules_to_save:
+  - embed_tokens
+  - lm_head
+
+# Dataset
+datasets:
+  - path: data/final/train.jsonl
+    type: completion
+    field: text
+  
+dataset_prepared_path: data/axolotl_prepared
+val_set_size: 0.05
+
+# Sequence handling
+sequence_len: 4096
+sample_packing: true
+pad_to_sequence_len: true
+eval_sample_packing: false
+
+# Formatting
+chat_template: chatml
+default_system_message: "You are a helpful AI assistant."
+
+# Training hyperparameters
+output_dir: outputs/axolotl_training
+num_epochs: 3
+micro_batch_size: 4
+gradient_accumulation_steps: 8
+learning_rate: 0.0002
+lr_scheduler: cosine
+warmup_ratio: 0.03
+weight_decay: 0.01
+optimizer: paged_adamw_8bit
+
+# Mixed precision
+bf16: auto
+tf32: true
+
+# Memory optimization
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+
+# NEFTune
+neftune_noise_alpha: 5.0
+
+# DeepSpeed
+deepspeed: training/configs/ds_config_zero3.json
+
+# Logging
+logging_steps: 10
+save_steps: 500
+eval_steps: 500
+save_total_limit: 3
+wandb_project: llama3-domain-finetune
+wandb_run_id:
+wandb_log_model: checkpoint
+
+# Evaluation
+do_eval: true
+eval_strategy: steps
+load_best_model_at_end: true
+metric_for_best_model: eval_loss
+
+# Performance
+flash_attention: true
+dataloader_num_workers: 4
+dataloader_pin_memory: true
+group_by_length: true
+
+# Misc
+seed: 42
+debug:
+early_stopping_patience: 5

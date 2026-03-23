@@ -1,0 +1,69 @@
+groups:
+  - name: training_alerts
+    rules:
+      - alert: TrainingLossSpike
+        expr: training_loss > 10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Training loss spiked above 10"
+          description: "Training loss has been {{ $value }} for more than 5 minutes"
+
+      - alert: GPUMemoryExhaustion
+        expr: gpu_memory_used_bytes / gpu_memory_total_bytes > 0.95
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GPU memory usage above 95%"
+
+      - alert: GPUTemperatureHigh
+        expr: gpu_temperature_celsius > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GPU temperature exceeds 85°C"
+
+      - alert: TrainingStalled
+        expr: changes(training_global_step[10m]) == 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Training has not progressed in 10 minutes"
+
+      - alert: GradientExplosion
+        expr: gradient_norm_total > 100
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Gradient norm exceeded 100"
+
+  - name: inference_alerts
+    rules:
+      - alert: HighLatency
+        expr: inference_latency_ms > 5000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Inference latency exceeds 5 seconds"
+
+      - alert: HighErrorRate
+        expr: rate(inference_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Inference error rate above 10%"
+
+      - alert: ServerDown
+        expr: up{job="vllm_inference"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "vLLM inference server is down"

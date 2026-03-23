@@ -1,0 +1,377 @@
+# =============================================================================
+# Distributed Fine-Tuning Pipeline - Master Configuration
+# =============================================================================
+# This config drives the entire pipeline: data curation → training → merging →
+# evaluation → deployment. Every module reads from this single source of truth.
+
+project:
+  name: "domain-finetune-pipeline"
+  version: "1.0.0"
+  seed: 42
+  wandb_project: "llama3-domain-finetune"
+  wandb_entity: null  # Set to your W&B team name
+
+# ---------------------------------------------------------------------------
+# 1. DATA CURATION
+# ---------------------------------------------------------------------------
+data_curation:
+  # --- Scraping ---
+  scraping:
+    sources:
+      - type: "arxiv"
+        query: "large language models fine-tuning"
+        max_papers: 5000
+        date_range: ["2023-01-01", "2025-12-31"]
+      - type: "github"
+        repos:
+          - "huggingface/transformers"
+          - "vllm-project/vllm"
+          - "pytorch/pytorch"
+        include_issues: true
+        include_discussions: true
+        max_items_per_repo: 2000
+      - type: "stackoverflow"
+        tags: ["pytorch", "transformers", "llm", "fine-tuning"]
+        max_questions: 3000
+        min_score: 5
+      - type: "huggingface_datasets"
+        datasets:
+          - "Open-Orca/OpenOrca"
+          - "teknium/OpenHermes-2.5"
+          - "meta-math/MetaMathQA"
+        sample_size_per_dataset: 10000
+      - type: "custom_crawl"
+        urls_file: "config/custom_urls.txt"
+        depth: 2
+        respect_robots: true
+    output_dir: "data/raw"
+    num_workers: 8
+    rate_limit_per_second: 2.0
+
+  # --- Cleaning ---
+  cleaning:
+    deduplication:
+      method: "minhash_lsh"    # minhash_lsh | exact_hash | simhash
+      similarity_threshold: 0.85
+      num_perm: 128              # MinHash permutations
+      bands: 32
+      rows: 4
+    text_processing:
+      min_length_chars: 100
+      max_length_chars: 32768
+      min_word_count: 20
+      max_repetition_ratio: 0.3  # Max fraction of repeated n-grams
+      remove_boilerplate: true
+      language_filter: "en"
+      language_confidence_threshold: 0.8
+    pii_removal:
+      enabled: true
+      patterns: ["email", "phone", "ssn", "ip_address", "credit_card"]
+      replacement: "[REDACTED]"
+    output_dir: "data/cleaned"
+
+  # --- LLM-as-Judge Scoring ---
+  llm_judge:
+    model: "claude-3-5-sonnet-20241022"  # or local model
+    provider: "anthropic"                 # anthropic | openai | local
+    batch_size: 50
+    max_concurrent: 10
+    scoring_dimensions:
+      - name: "relevance"
+        weight: 0.30
+        description: "How relevant is this to the target domain?"
+      - name: "quality"
+        weight: 0.25
+        description: "Is the content well-written, accurate, and informative?"
+      - name: "complexity"
+        weight: 0.20
+        description: "Does this require genuine reasoning or expertise?"
+      - name: "diversity"
+        weight: 0.15
+        description: "Does this cover a unique subtopic or perspective?"
+      - name: "instruction_following"
+        weight: 0.10
+        description: "If instruction-response pair, does the response follow the instruction?"
+    score_range: [1, 5]
+    min_composite_score: 3.5           # Threshold for inclusion
+    calibration_samples: 200            # Human-annotated calibration set
+    inter_annotator_agreement_threshold: 0.75  # Cohen's kappa
+    output_dir: "data/scored"
+    cache_dir: "data/judge_cache"
+
+  # --- Dataset Assembly ---
+  assembly:
+    train_split: 0.90
+    val_split: 0.05
+    test_split: 0.05
+    stratify_by: "composite_score_bin"  # Ensure score distribution is balanced
+    max_sequence_length: 4096
+    packing: true                        # Pack short sequences together
+    chat_template: "chatml"              # chatml | llama | alpaca | vicuna
+    output_format: "arrow"               # arrow | jsonl | parquet
+    output_dir: "data/final"
+
+# ---------------------------------------------------------------------------
+# 2. TRAINING
+# ---------------------------------------------------------------------------
+training:
+  # --- Base Model ---
+  base_model:
+    name: "meta-llama/Meta-Llama-3-8B"
+    revision: "main"
+    torch_dtype: "bfloat16"
+    attn_implementation: "flash_attention_2"  # flash_attention_2 | sdpa | eager
+    trust_remote_code: false
+
+  # --- QLoRA Configuration ---
+  qlora:
+    r: 64                          # LoRA rank
+    lora_alpha: 128                # Scaling factor (typically 2*r)
+    lora_dropout: 0.05
+    target_modules:
+      - "q_proj"
+      - "k_proj"
+      - "v_proj"
+      - "o_proj"
+      - "gate_proj"
+      - "up_proj"
+      - "down_proj"
+    modules_to_save:                # Full fine-tune these layers
+      - "embed_tokens"
+      - "lm_head"
+    quantization:
+      bits: 4
+      quant_type: "nf4"            # nf4 | fp4
+      double_quant: true
+      compute_dtype: "bfloat16"
+
+  # --- Training Hyperparameters ---
+  hyperparameters:
+    num_epochs: 3
+    per_device_train_batch_size: 4
+    per_device_eval_batch_size: 4
+    gradient_accumulation_steps: 8   # Effective batch = 4 * 8 * num_gpus
+    learning_rate: 2.0e-4
+    lr_scheduler_type: "cosine"
+    warmup_ratio: 0.03
+    weight_decay: 0.01
+    max_grad_norm: 1.0
+    bf16: true
+    tf32: true
+    gradient_checkpointing: true
+    gradient_checkpointing_kwargs:
+      use_reentrant: false
+    optim: "paged_adamw_8bit"       # paged_adamw_8bit | adamw_torch_fused
+    neftune_noise_alpha: 5.0        # NEFTune for better generalization
+    max_seq_length: 4096
+    dataset_text_field: null         # Use chat template instead
+    logging_steps: 10
+    save_steps: 500
+    eval_steps: 500
+    save_total_limit: 3
+    load_best_model_at_end: true
+    metric_for_best_model: "eval_loss"
+    greater_is_better: false
+    report_to: "wandb"
+    dataloader_num_workers: 4
+    dataloader_pin_memory: true
+    group_by_length: true
+
+  # --- Distributed Training ---
+  distributed:
+    strategy: "deepspeed_zero3"      # deepspeed_zero3 | fsdp | ddp
+    num_gpus: 4
+    num_nodes: 1
+    deepspeed:
+      zero_stage: 3
+      offload_optimizer: false       # CPU offload for optimizer states
+      offload_param: false           # CPU offload for params
+      overlap_comm: true
+      contiguous_gradients: true
+      reduce_bucket_size: 5.0e+8
+      stage3_prefetch_bucket_size: 5.0e+8
+      stage3_param_persistence_threshold: 1.0e+6
+      stage3_max_live_parameters: 1.0e+9
+      stage3_max_reuse_distance: 1.0e+9
+      gather_16bit_weights_on_model_save: true
+      round_robin_gradients: true
+    fsdp:
+      sharding_strategy: "FULL_SHARD"  # FULL_SHARD | SHARD_GRAD_OP | NO_SHARD
+      auto_wrap_policy: "transformer_based_wrap"
+      transformer_layer_cls_to_wrap: "LlamaDecoderLayer"
+      backward_prefetch: "backward_pre"
+      forward_prefetch: true
+      limit_all_gathers: true
+      cpu_offload: false
+      sync_module_states: true
+      use_orig_params: true
+      activation_checkpointing: true
+
+  # --- Axolotl Config (alternative training runner) ---
+  axolotl:
+    enabled: false
+    config_path: "training/configs/axolotl_config.yaml"
+
+  # --- Experiment Tracking ---
+  tracking:
+    wandb:
+      project: "llama3-domain-finetune"
+      tags: ["qlora", "llama3-8b", "deepspeed"]
+      log_model: "checkpoint"
+      log_code: true
+    checkpoints_dir: "checkpoints"
+    output_dir: "outputs/training"
+
+# ---------------------------------------------------------------------------
+# 3. MODEL MERGING
+# ---------------------------------------------------------------------------
+model_merging:
+  methods:
+    - name: "ties"
+      config:
+        density: 0.5                 # Fraction of params to keep
+        weight: 1.0
+        normalize: true
+        int8_mask: true
+    - name: "dare_ties"
+      config:
+        density: 0.5
+        weight: 0.7
+        normalize: true
+        rescale: true
+    - name: "slerp"
+      config:
+        t: 0.5                       # Interpolation factor
+
+  models_to_merge:
+    - name: "domain_finetuned"
+      path: "outputs/training/final_adapter"
+      weight: 0.6
+    - name: "instruction_tuned"
+      path: "models/complementary/instruction-model"
+      weight: 0.4
+
+  base_model: "meta-llama/Meta-Llama-3-8B"
+  output_dir: "outputs/merged"
+  dtype: "bfloat16"
+  device: "cuda"
+  mergekit_config_dir: "model_merging/configs"
+
+# ---------------------------------------------------------------------------
+# 4. EVALUATION
+# ---------------------------------------------------------------------------
+evaluation:
+  models_to_evaluate:
+    - name: "base"
+      path: "meta-llama/Meta-Llama-3-8B"
+    - name: "domain_finetuned"
+      path: "outputs/training/final_merged"
+    - name: "merged_ties"
+      path: "outputs/merged/ties"
+    - name: "merged_dare"
+      path: "outputs/merged/dare_ties"
+    - name: "merged_slerp"
+      path: "outputs/merged/slerp"
+
+  benchmarks:
+    # Custom domain-specific benchmarks
+    - name: "domain_knowledge"
+      type: "multiple_choice"
+      data_path: "evaluation/benchmarks/domain_mc.jsonl"
+      num_few_shot: 5
+      metric: "accuracy"
+    - name: "domain_generation"
+      type: "generation"
+      data_path: "evaluation/benchmarks/domain_gen.jsonl"
+      metrics: ["rouge_l", "bertscore", "gpt4_judge"]
+      max_new_tokens: 512
+    - name: "instruction_following"
+      type: "generation"
+      data_path: "evaluation/benchmarks/instruction_following.jsonl"
+      metrics: ["gpt4_judge", "length_compliance"]
+      max_new_tokens: 1024
+    # Standard benchmarks
+    - name: "mmlu"
+      type: "lm_eval_harness"
+      task: "mmlu"
+      num_few_shot: 5
+    - name: "hellaswag"
+      type: "lm_eval_harness"
+      task: "hellaswag"
+      num_few_shot: 10
+    - name: "truthfulqa"
+      type: "lm_eval_harness"
+      task: "truthfulqa_mc2"
+      num_few_shot: 0
+    - name: "gsm8k"
+      type: "lm_eval_harness"
+      task: "gsm8k"
+      num_few_shot: 5
+    - name: "humaneval"
+      type: "lm_eval_harness"
+      task: "humaneval"
+      num_few_shot: 0
+
+  llm_judge:
+    model: "gpt-4o"
+    provider: "openai"
+    num_judges: 3                    # Ensemble of judges
+    agreement_method: "majority_vote"
+    rubric_path: "evaluation/harness/rubrics.yaml"
+
+  output_dir: "outputs/evaluation"
+  report_format: ["html", "wandb", "json"]
+
+# ---------------------------------------------------------------------------
+# 5. INFERENCE / DEPLOYMENT
+# ---------------------------------------------------------------------------
+inference:
+  vllm:
+    model_path: "outputs/merged/best"  # Set after eval determines winner
+    tensor_parallel_size: 2
+    pipeline_parallel_size: 1
+    dtype: "auto"
+    quantization: "awq"               # awq | gptq | null (for fp16/bf16)
+    max_model_len: 4096
+    gpu_memory_utilization: 0.90
+    max_num_batched_tokens: 8192
+    max_num_seqs: 256
+    enable_prefix_caching: true
+    enable_chunked_prefill: true
+    swap_space: 4                      # GB of CPU swap space
+    enforce_eager: false
+    host: "0.0.0.0"
+    port: 8000
+    api_key: null                       # Set via env var VLLM_API_KEY
+
+  load_testing:
+    tool: "locust"
+    target_rps: 100
+    duration_seconds: 300
+    num_users: 50
+    spawn_rate: 5
+
+# ---------------------------------------------------------------------------
+# 6. AWS INFRASTRUCTURE
+# ---------------------------------------------------------------------------
+aws:
+  region: "us-east-1"
+  training:
+    instance_type: "p4d.24xlarge"      # 8x A100 80GB
+    spot:
+      enabled: true
+      max_price: "15.00"               # Per hour
+      interruption_behavior: "hibernate"
+    volume_size_gb: 500
+    ami: "ami-0xxxxxxxxxxxxxxxxx"       # Deep Learning AMI
+  inference:
+    instance_type: "g5.2xlarge"         # 1x A10G 24GB
+    min_instances: 1
+    max_instances: 4
+    target_gpu_utilization: 0.70
+  s3:
+    bucket: "llm-finetune-pipeline"
+    checkpoints_prefix: "checkpoints/"
+    datasets_prefix: "datasets/"
+    models_prefix: "models/"
+    logs_prefix: "logs/"

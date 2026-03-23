@@ -1,0 +1,19 @@
+# Custom URLs for domain-specific data scraping
+# One URL per line. Lines starting with # are comments.
+# Supported: HTML pages, documentation sites, blog posts
+
+# ML/AI Documentation
+https://huggingface.co/docs/transformers/main/en/training
+https://huggingface.co/docs/peft/main/en/index
+https://huggingface.co/docs/trl/main/en/sft_trainer
+https://deepspeed.readthedocs.io/en/latest/
+https://pytorch.org/docs/stable/fsdp.html
+
+# Research Blogs
+https://huggingface.co/blog
+https://lilianweng.github.io/posts/
+https://jalammar.github.io/
+
+# Technical Documentation
+https://docs.vllm.ai/en/latest/
+https://docs.ray.io/en/latest/train/train.html

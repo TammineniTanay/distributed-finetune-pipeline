@@ -1,0 +1,142 @@
+version: "3.9"
+
+services:
+  # ===========================================================================
+  # Training Service
+  # ===========================================================================
+  training:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/Dockerfile.training
+    container_name: finetune-training
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - ../../config:/app/config:ro
+      - training-checkpoints:/app/checkpoints
+      - training-data:/app/data
+      - training-outputs:/app/outputs
+      - model-cache:/root/.cache/huggingface
+    environment:
+      - WANDB_API_KEY=${WANDB_API_KEY}
+      - HF_TOKEN=${HF_TOKEN}
+      - NCCL_DEBUG=WARN
+      - CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+    shm_size: "16gb"
+    ipc: host
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    networks:
+      - pipeline-net
+    profiles:
+      - training
+
+  # ===========================================================================
+  # Inference Service
+  # ===========================================================================
+  inference:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/Dockerfile.inference
+    container_name: finetune-inference
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 2
+              capabilities: [gpu]
+    ports:
+      - "8000:8000"
+      - "8080:8080"
+    volumes:
+      - ../../config:/app/config:ro
+      - training-outputs:/app/models:ro
+      - model-cache:/root/.cache/huggingface
+    environment:
+      - CUDA_VISIBLE_DEVICES=0,1
+      - HF_TOKEN=${HF_TOKEN}
+    shm_size: "8gb"
+    networks:
+      - pipeline-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    profiles:
+      - inference
+
+  # ===========================================================================
+  # Monitoring Stack
+  # ===========================================================================
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: finetune-prometheus
+    ports:
+      - "9091:9090"
+    volumes:
+      - ../../monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../../monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    networks:
+      - pipeline-net
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: finetune-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - pipeline-net
+
+  # ===========================================================================
+  # Load Testing (optional)
+  # ===========================================================================
+  locust:
+    image: locustio/locust:2.29.1
+    container_name: finetune-locust
+    ports:
+      - "8089:8089"
+    volumes:
+      - ../../inference/load_testing:/mnt/locust:ro
+    command: >
+      -f /mnt/locust/locustfile.py
+      --host=http://inference:8080
+    depends_on:
+      - inference
+    networks:
+      - pipeline-net
+    profiles:
+      - loadtest
+
+volumes:
+  training-checkpoints:
+  training-data:
+  training-outputs:
+  model-cache:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  pipeline-net:
+    driver: bridge

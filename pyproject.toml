@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=69.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "distributed-finetune-pipeline"
+version = "1.0.0"
+description = "End-to-end distributed LLM fine-tuning pipeline with dataset curation, QLoRA training, model merging, evaluation, and vLLM deployment"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Tanay Tammineni"},
+]
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+]
+
+[project.scripts]
+finetune-pipeline = "pipeline:main"
+
+[tool.setuptools.packages.find]
+include = [
+    "config*",
+    "data_curation*",
+    "training*",
+    "model_merging*",
+    "evaluation*",
+    "inference*",
+    "monitoring*",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --tb=short --strict-markers"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "gpu: marks tests that require GPU",
+    "integration: marks integration tests",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "config", "data_curation", "training",
+    "model_merging", "evaluation", "inference", "monitoring",
+]

@@ -1,0 +1,61 @@
+# ==============================================================================
+# Stage 1: Base with CUDA runtime (smaller than devel)
+# ==============================================================================
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS base
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-venv \
+    python3-pip \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
+    && update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
+
+RUN python -m pip install --no-cache-dir --upgrade pip
+
+# ==============================================================================
+# Stage 2: Install vLLM and serving dependencies
+# ==============================================================================
+FROM base AS inference
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir \
+    torch==2.4.0 \
+    --index-url https://download.pytorch.org/whl/cu124
+
+RUN pip install --no-cache-dir \
+    vllm>=0.5.5 \
+    transformers>=4.44.0 \
+    fastapi>=0.112.0 \
+    uvicorn[standard]>=0.30.0 \
+    aiohttp>=3.10.0 \
+    prometheus-client>=0.20.0 \
+    autoawq>=0.2.0 \
+    safetensors>=0.4.0
+
+# Copy inference code
+COPY inference/ /app/inference/
+COPY monitoring/ /app/monitoring/
+COPY config/ /app/config/
+
+RUN mkdir -p /app/models /app/logs
+
+# vLLM environment
+ENV VLLM_ATTENTION_BACKEND=FLASH_ATTN
+ENV RAY_OBJECT_STORE_MEMORY=10737418240
+ENV HF_HOME=/app/models/.cache
+ENV CUDA_VISIBLE_DEVICES=0,1
+
+EXPOSE 8000 8080 9090
+
+HEALTHCHECK --interval=15s --timeout=5s --retries=5 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+ENTRYPOINT ["python", "-m", "inference.vllm_server.server"]
+CMD ["--config", "/app/config/pipeline_config.yaml"]
